@@ -1,64 +1,78 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Threading.Tasks;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.Azure.WebJobs;
-using Microsoft.Azure.WebJobs.Extensions.Http;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
-using System.Net.Http;
-using System.Text;
 
 namespace RefactoringTest.ProductService
 {
     public class ProductService
     {
         private readonly IEnumerable<int> _allAvailableIds = Enumerable.Range(0, 100000000);
-        private const string _usedIdsFileName = "used_ids.txt";
-        
-        public bool AddProduct(string productName, string produtcDescirption, decimal price, int quantity, string brandName, string promotion)
+        private const string _usedIdsFileName = "used_ids.txt";        
+
+
+        private IPriceCalculator _priceCalculator;
+        private IVerifyBrand _verifyBrand;       
+        private IFileReader _fileReader;
+       
+
+        public ProductService(IPriceCalculator priceCalculator = null, IVerifyBrand verifyBrand = null, IFileReader fileReader = null)
         {
-            if(string.IsNullOrEmpty(productName) || string.IsNullOrEmpty(produtcDescirption))
-                return false;
-            
-            if(price <= 0 || quantity <= 0)
+            _priceCalculator = priceCalculator ?? new PriceCalculator();
+            _verifyBrand = verifyBrand ?? new VerifyBrand();
+            _fileReader = fileReader ?? new FileReader();
+        }
+
+        public bool AddProduct(string productName, string produtcDescription, decimal price, int quantity, string brandName, string promotion)
+        {
+            bool isValidRequest = validateRequest(productName, produtcDescription, price, quantity, brandName, promotion);
+
+            if (!isValidRequest)
                 return false;
 
-            if(string.IsNullOrEmpty(brandName))
-                return false;
+            price = _priceCalculator.CalculatePriceBasedOnPromotion(promotion, price);
 
-            if (promotion == "5PERCENTOFF")
-                price = price - price * 0.05m;
-            else if (promotion == "10PERCENTOFF")
-                price = price - price * 0.1m;
-            else if (promotion == "20PERCENTOFF")
-                price = price - price * 0.2m;
-            else if (!string.IsNullOrEmpty((promotion)))
-                throw new ArgumentException("Invalid promotion specified");
-
-            var sb = new StringBuilder();
-            sb.Append("http://brandservice-test.azurewebsites.net?brandName=");
-            sb.Append(brandName);
-            var ep = sb.ToString();
-            var c = new HttpClient();
-            var r = c.GetAsync(ep).Result.Content.ReadAsStringAsync().Result;
-            var isBrandAllowed = bool.Parse(r);
+            var isBrandAllowed = _verifyBrand.IsBrandAllowed(brandName).Result;
 
             if (!isBrandAllowed)
                 return false;
 
-            var usedIds = File.ReadAllLines(_usedIdsFileName).Select(int.Parse);
+            var usedIds = _fileReader.Read(_usedIdsFileName);
+
             var id = _allAvailableIds.FirstOrDefault(x => usedIds.All(i => i != x));
-            
-            if(id == 0)
+
+            if (id == 0)
                 throw new Exception("No available ids left");
-            
-            ProductRepository.AddProduct(id, productName, produtcDescirption, price, quantity, brandName);
-            
+
+            ProductRepository.AddProduct(id, productName, produtcDescription, price, quantity, brandName);
+
+            return true;
+        }
+
+
+
+        private bool validateRequest(string productName, string produtcDescription, decimal price, int quantity, string brandName, string promotion)
+        {
+            if (string.IsNullOrEmpty(productName) || string.IsNullOrEmpty(produtcDescription))
+                return false;
+
+            if (price <= 0 || quantity <= 0)
+                return false;
+
+            if (string.IsNullOrEmpty(brandName))
+                return false;
+
+            List<string> promotionsTypes = new List<string>() { "5PERCENTOFF", "10PERCENTOFF", "20PERCENTOFF" };
+            bool isPresent = promotionsTypes.Any(promotion.Contains);
+
+            if (!string.IsNullOrEmpty(promotion) && !isPresent)
+                return false;
+
             return true;
         }
     }
+
+
+
+
+
 }
